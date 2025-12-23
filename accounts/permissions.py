@@ -1,18 +1,20 @@
 from rest_framework.permissions import BasePermission
+from accounts.models import User
+
 
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == "ADMIN")
+        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.ADMIN)
 
 
 class IsManager(BasePermission):
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == "MANAGER")
+        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.MANAGER)
 
 
 class IsEmployee(BasePermission):
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == "EMPLOYEE")
+        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.EMPLOYEE)
 
 
 class IsAdminOrManager(BasePermission):
@@ -20,16 +22,28 @@ class IsAdminOrManager(BasePermission):
         return bool(
             request.user
             and request.user.is_authenticated
-            and request.user.role in ["ADMIN", "MANAGER"]
+            and request.user.role in [User.Role.ADMIN, User.Role.MANAGER]
         )
 
 
-class IsAdminOrManagerOrEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated)
-
 class IsSelfOrAdmin(BasePermission):
     def has_object_permission(self, request, view, obj):
-        if request.user.role == "ADMIN":
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.role == User.Role.ADMIN:
             return True
-        return obj.user_id == request.user.id  
+
+        # obj is User
+        if isinstance(obj, User):
+            return obj.id == request.user.id
+
+        # obj has user (Employee profile)
+        if hasattr(obj, "user_id"):
+            return obj.user_id == request.user.id
+
+        # obj has employee.user (Attendance/Payroll)
+        if hasattr(obj, "employee") and hasattr(obj.employee, "user_id"):
+            return obj.employee.user_id == request.user.id
+
+        return False
