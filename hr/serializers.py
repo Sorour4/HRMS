@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from accounts.models import User
-from .models import Department, Employee
+from .models import Department, Employee, Attendance
+from django.db import IntegrityError, transaction
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
@@ -59,3 +60,50 @@ class EmployeeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"manager": "Manager must have role MANAGER."})
 
         return attrs
+    
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Attendance
+        fields = ["id", "employee", "date", "status", "note", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        """
+        RBAC + data rules:
+        - One attendance per employee per day (DB constraint; also validated here).
+        - Manager can only create/update for employees in their department.
+        - Employee cannot create/update (view-only for self).
+        """
+        request = self.context["request"]
+        user = request.user
+
+        # Only validate scope if employee provided (create) or existing instance (update)
+        target_employee = attrs.get("employee") or getattr(self.instance, "employee", None)
+
+        if not target_employee:
+            return attrs
+
+        # Admin can do anything
+        if getattr(user, "role", None) == "ADMIN" or user.is_superuser:
+            return attrs
+
+        # Manager scope: must have employee profile and same department as target
+        if getattr(user, "role", None) == "MANAGER":
+            if not hasattr(user, "employee"):
+                raise serializers.ValidationError("Manager must have an Employee profile.")
+
+            if user.employee.department_id != target_employee.department_id:
+                raise serializers.ValidationError("Managers can only manage attendance within their department.")
+            return attrs
+
+        # Employee role: no create/update
+        raise serializers.ValidationError("Employees are not allowed to create or modify attendance records.")
+
+    def create(self, validated_data):
+        # Convert DB constraint error into clean 400
+        try:
+            with transaction.atomic():
+                return super().create(validated_data)
+        except IntegrityError:
+            raise serializers.ValidationError({"date": "Attendance already exists for this employee on this date."})

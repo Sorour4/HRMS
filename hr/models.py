@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.db import models
-
+from rest_framework.exceptions import ValidationError
 
 class Department(models.Model):
     name = models.CharField(max_length=200, unique=True)
@@ -50,3 +50,36 @@ class Employee(models.Model):
 
     def __str__(self):
         return f"{self.user.username}"
+    
+
+class Attendance(models.Model):
+    class Status(models.TextChoices):
+        PRESENT = "PRESENT", "Present"
+        ABSENT = "ABSENT", "Absent"
+        LATE = "LATE", "Late"
+        LEAVE = "LEAVE", "Leave"
+
+    employee = models.ForeignKey(
+        "hr.Employee",
+        on_delete=models.PROTECT,
+        related_name="attendance_records",
+    )
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PRESENT)
+    note = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "date"], name="uniq_attendance_employee_date")
+        ]
+
+    def clean(self):
+        if self.date is None:
+            raise ValidationError({"date": "Date is required."})
+
+    def __str__(self):
+        return f"{self.employee_id} - {self.date} - {self.status}"

@@ -1,9 +1,10 @@
 from rest_framework.viewsets import ModelViewSet
+from rest_framework import viewsets, mixins
 from rest_framework.permissions import IsAuthenticated
 from accounts.models import User
 from accounts.permissions import IsAdmin, IsAdminOrManager
-from .models import Department, Employee
-from .serializers import DepartmentSerializer, EmployeeSerializer
+from .models import Department, Employee, Attendance
+from .serializers import DepartmentSerializer, EmployeeSerializer, AttendanceSerializer
 from django.db.models.deletion import ProtectedError
 from rest_framework.exceptions import ValidationError
 
@@ -74,3 +75,40 @@ class EmployeeViewSet(ModelViewSet):
 
         # Employee sees only self
         return qs.filter(user=user)
+    
+class AttendanceViewSet(viewsets.ModelViewSet):
+    """
+    Endpoints:
+    - GET /api/attendance/            (paginated)
+    - GET /api/attendance/<id>/
+    - POST /api/attendance/           (Admin or Manager only)
+    - PATCH /api/attendance/<id>/     (Admin or Manager only)
+    """
+    serializer_class = AttendanceSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Attendance.objects.select_related("employee", "employee__user", "employee__department")
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        role = getattr(user, "role", None)
+        if role == "ADMIN" or user.is_superuser:
+            return qs
+
+        if role == "MANAGER":
+            # If manager missing employee profile -> return nothing (consistent with your 404 style)
+            if not hasattr(user, "employee") or not user.employee.department_id:
+                return qs.none()
+            return qs.filter(employee__department_id=user.employee.department_id)
+
+        # EMPLOYEE: only self
+        if hasattr(user, "employee"):
+            return qs.filter(employee_id=user.employee.id)
+
+        return qs.none()
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx

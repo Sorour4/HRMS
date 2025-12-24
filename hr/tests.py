@@ -1,7 +1,9 @@
 from rest_framework.test import APITestCase
 from rest_framework import status
+from django.urls import reverse
 from accounts.models import User
-from hr.models import Department, Employee
+from hr.models import Department, Employee, Attendance
+from datetime import date
 
 
 class EmployeeRBACAPITests(APITestCase):
@@ -164,3 +166,81 @@ class DepartmentAPITests(APITestCase):
         url = f"/api/departments/{self.dept_a.id}/"
         res = self.client.delete(url)
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+class AttendanceAPITests(APITestCase):
+    def setUp(self):
+        # Departments
+        self.dept_a = Department.objects.create(name="Dept A", location="Loc A")
+        self.dept_b = Department.objects.create(name="Dept B", location="Loc B")
+
+        # Users
+        self.admin = User.objects.create_user(username="admin", password="pass1234", role="ADMIN",email="admin_att@test.com")
+        self.manager_user = User.objects.create_user(username="mgr", password="pass1234", role="MANAGER",email="mgr_att@test.com")
+        self.employee_user = User.objects.create_user(username="emp", password="pass1234", role="EMPLOYEE",email="emp_att@test.com")
+        self.other_employee_user = User.objects.create_user(username="emp2", password="pass1234", role="EMPLOYEE",email="emp2_att@test.com")
+
+        # Employee profiles
+        self.manager_emp = Employee.objects.create(user=self.manager_user, department=self.dept_a, phone="1", salary=1000, join_date="2025-01-01")
+        self.emp_a = Employee.objects.create(user=self.employee_user, department=self.dept_a, phone="2", salary=900, join_date="2025-01-01")
+        self.emp_b = Employee.objects.create(user=self.other_employee_user, department=self.dept_b, phone="3", salary=900, join_date="2025-01-01")
+
+        # Attendance records
+        self.a1 = Attendance.objects.create(employee=self.emp_a, date=date(2025, 12, 1), status="PRESENT")
+        self.b1 = Attendance.objects.create(employee=self.emp_b, date=date(2025, 12, 1), status="ABSENT")
+
+        self.list_url = reverse("attendance-list")
+
+    def auth(self, user):
+        self.client.force_authenticate(user=user)
+
+    def test_admin_sees_all_attendance(self):
+        self.auth(self.admin)
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 2)
+
+    def test_manager_sees_only_department_attendance(self):
+        self.auth(self.manager_user)
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]["employee"], self.emp_a.id)
+
+    def test_employee_sees_only_own_attendance(self):
+        self.auth(self.employee_user)
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]["employee"], self.emp_a.id)
+
+    def test_employee_cannot_create_attendance(self):
+        self.auth(self.employee_user)
+        payload = {"employee": self.emp_a.id, "date": "2025-12-02", "status": "PRESENT"}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_manager_can_create_attendance_for_own_department(self):
+        self.auth(self.manager_user)
+        payload = {"employee": self.emp_a.id, "date": "2025-12-02", "status": "LATE"}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+    def test_manager_cannot_create_attendance_outside_department(self):
+        self.auth(self.manager_user)
+        payload = {"employee": self.emp_b.id, "date": "2025-12-02", "status": "PRESENT"}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_duplicate_attendance_same_employee_same_date_rejected(self):
+        self.auth(self.admin)
+        payload = {"employee": self.emp_a.id, "date": "2025-12-01", "status": "ABSENT"}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("non_field_errors", res.data)
+
+    def test_employee_cannot_access_other_employee_attendance_detail(self):
+        self.auth(self.employee_user)
+        detail_url = reverse("attendance-detail", args=[self.b1.id])
+        res = self.client.get(detail_url)
+        # Should be 404 due to scoped queryset
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
