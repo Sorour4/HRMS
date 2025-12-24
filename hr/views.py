@@ -1,3 +1,53 @@
-from django.shortcuts import render
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
+from accounts.models import User
+from accounts.permissions import IsAdmin, IsAdminOrManager
+from .models import Department, Employee
+from .serializers import DepartmentSerializer, EmployeeSerializer
 
-# Create your views here.
+
+class DepartmentViewSet(ModelViewSet):
+    queryset = Department.objects.all().select_related("manager", "manager__user")
+    serializer_class = DepartmentSerializer
+
+    def get_permissions(self):
+        # Admin/Manager can read; only Admin can write (safe start)
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [IsAdmin()]
+        return [IsAdminOrManager()]
+
+
+class EmployeeViewSet(ModelViewSet):
+    queryset = Employee.objects.all().select_related("user", "department", "manager", "manager__user")
+    serializer_class = EmployeeSerializer
+
+    def get_permissions(self):
+        # Admin can do anything
+        if self.request.user and self.request.user.is_authenticated and self.request.user.role == "ADMIN":
+            return [IsAuthenticated()]
+
+        # Managers can UPDATE employees
+        if self.action in ["update", "partial_update"]:
+            return [IsAdminOrManager()]
+
+        # Only Admin can create/delete 
+        if self.action in ["create", "destroy"]:
+            return [IsAdmin()]
+
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.role == User.Role.ADMIN:
+            return qs
+
+        # Manager must have employee profile + dept 
+        if user.role == User.Role.MANAGER:
+            if not hasattr(user, "employee") or user.employee.department_id is None:
+                return qs.none()
+            return qs.filter(department_id=user.employee.department_id)
+
+        # Employee sees only self
+        return qs.filter(user=user)
