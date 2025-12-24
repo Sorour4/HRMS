@@ -6,7 +6,16 @@ from hr.models import Department, Employee, Attendance
 from datetime import date
 
 
-class EmployeeRBACAPITests(APITestCase):
+class PaginationMixin:
+    """
+    Works with paginated and non-paginated responses.
+    After you enabled pagination, res.data is a dict with 'results'.
+    """
+    def results(self, res):
+        return res.data["results"] if isinstance(res.data, dict) and "results" in res.data else res.data
+
+
+class EmployeeRBACAPITests(PaginationMixin, APITestCase):
     def setUp(self):
         # Users
         self.admin = User.objects.create_user(
@@ -40,13 +49,16 @@ class EmployeeRBACAPITests(APITestCase):
         self.auth_as(self.admin)
         res = self.client.get(self.employees_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(res.data), 3)
+        self.assertGreaterEqual(len(self.results(res)), 3)
 
     def test_employee_list_manager_sees_only_department(self):
         self.auth_as(self.manager_user)
         res = self.client.get(self.employees_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        ids = {item["id"] for item in res.data}
+
+        items = self.results(res)
+        ids = {item["id"] for item in items}
+
         self.assertIn(self.manager_emp.id, ids)
         self.assertIn(self.emp1.id, ids)
         self.assertNotIn(self.emp2.id, ids)
@@ -55,8 +67,10 @@ class EmployeeRBACAPITests(APITestCase):
         self.auth_as(self.employee_user)
         res = self.client.get(self.employees_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 1)
-        self.assertEqual(res.data[0]["user"], self.employee_user.id)
+
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["user"], self.employee_user.id)
 
     def test_manager_can_update_employee_in_same_department(self):
         self.auth_as(self.manager_user)
@@ -70,7 +84,6 @@ class EmployeeRBACAPITests(APITestCase):
         self.auth_as(self.manager_user)
         url = f"/api/employees/{self.emp2.id}/"
         res = self.client.patch(url, {"phone": "888"}, format="json")
-        # because queryset hides it, it should look like "not found"
         self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_employee_cannot_update_other_employee(self):
@@ -79,7 +92,8 @@ class EmployeeRBACAPITests(APITestCase):
         res = self.client.patch(url, {"phone": "777"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
-class DepartmentAPITests(APITestCase):
+
+class DepartmentAPITests(PaginationMixin, APITestCase):
     def setUp(self):
         self.admin = User.objects.create_user(
             username="admin1", password="Pass12345!", role=User.Role.ADMIN, email="admin1@test.com"
@@ -121,21 +135,25 @@ class DepartmentAPITests(APITestCase):
         self.auth_as(self.admin)
         res = self.client.get(self.departments_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(res.data), 2)
+        self.assertGreaterEqual(len(self.results(res)), 2)
 
     def test_manager_sees_only_own_department(self):
         self.auth_as(self.manager_user)
         res = self.client.get(self.departments_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 1)
-        self.assertEqual(res.data[0]["id"], self.dept_a.id)
+
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], self.dept_a.id)
 
     def test_employee_sees_only_own_department(self):
         self.auth_as(self.employee_user)
         res = self.client.get(self.departments_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 1)
-        self.assertEqual(res.data[0]["id"], self.dept_a.id)
+
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], self.dept_a.id)
 
     def test_admin_can_assign_department_manager_if_manager_role_and_same_department(self):
         self.auth_as(self.admin)
@@ -156,7 +174,6 @@ class DepartmentAPITests(APITestCase):
 
     def test_admin_cannot_assign_manager_from_other_department(self):
         self.auth_as(self.admin)
-        # manager_emp is in Dept A, try assign as manager of Dept B
         url = f"/api/departments/{self.dept_b.id}/"
         res = self.client.patch(url, {"manager": self.manager_emp.id}, format="json")
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
@@ -167,24 +184,35 @@ class DepartmentAPITests(APITestCase):
         res = self.client.delete(url)
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
-class AttendanceAPITests(APITestCase):
+
+class AttendanceAPITests(PaginationMixin, APITestCase):
     def setUp(self):
-        # Departments
         self.dept_a = Department.objects.create(name="Dept A", location="Loc A")
         self.dept_b = Department.objects.create(name="Dept B", location="Loc B")
 
-        # Users
-        self.admin = User.objects.create_user(username="admin", password="pass1234", role="ADMIN",email="admin_att@test.com")
-        self.manager_user = User.objects.create_user(username="mgr", password="pass1234", role="MANAGER",email="mgr_att@test.com")
-        self.employee_user = User.objects.create_user(username="emp", password="pass1234", role="EMPLOYEE",email="emp_att@test.com")
-        self.other_employee_user = User.objects.create_user(username="emp2", password="pass1234", role="EMPLOYEE",email="emp2_att@test.com")
+        self.admin = User.objects.create_user(
+            username="admin", password="pass1234", role=User.Role.ADMIN, email="admin_att@test.com"
+        )
+        self.manager_user = User.objects.create_user(
+            username="mgr", password="pass1234", role=User.Role.MANAGER, email="mgr_att@test.com"
+        )
+        self.employee_user = User.objects.create_user(
+            username="emp", password="pass1234", role=User.Role.EMPLOYEE, email="emp_att@test.com"
+        )
+        self.other_employee_user = User.objects.create_user(
+            username="emp2", password="pass1234", role=User.Role.EMPLOYEE, email="emp2_att@test.com"
+        )
 
-        # Employee profiles
-        self.manager_emp = Employee.objects.create(user=self.manager_user, department=self.dept_a, phone="1", salary=1000, join_date="2025-01-01")
-        self.emp_a = Employee.objects.create(user=self.employee_user, department=self.dept_a, phone="2", salary=900, join_date="2025-01-01")
-        self.emp_b = Employee.objects.create(user=self.other_employee_user, department=self.dept_b, phone="3", salary=900, join_date="2025-01-01")
+        self.manager_emp = Employee.objects.create(
+            user=self.manager_user, department=self.dept_a, phone="1", salary=1000, join_date="2025-01-01"
+        )
+        self.emp_a = Employee.objects.create(
+            user=self.employee_user, department=self.dept_a, phone="2", salary=900, join_date="2025-01-01"
+        )
+        self.emp_b = Employee.objects.create(
+            user=self.other_employee_user, department=self.dept_b, phone="3", salary=900, join_date="2025-01-01"
+        )
 
-        # Attendance records
         self.a1 = Attendance.objects.create(employee=self.emp_a, date=date(2025, 12, 1), status="PRESENT")
         self.b1 = Attendance.objects.create(employee=self.emp_b, date=date(2025, 12, 1), status="ABSENT")
 
@@ -197,21 +225,25 @@ class AttendanceAPITests(APITestCase):
         self.auth(self.admin)
         res = self.client.get(self.list_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 2)
+        self.assertEqual(len(self.results(res)), 2)
 
     def test_manager_sees_only_department_attendance(self):
         self.auth(self.manager_user)
         res = self.client.get(self.list_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 1)
-        self.assertEqual(res.data[0]["employee"], self.emp_a.id)
+
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["employee"], self.emp_a.id)
 
     def test_employee_sees_only_own_attendance(self):
         self.auth(self.employee_user)
         res = self.client.get(self.list_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 1)
-        self.assertEqual(res.data[0]["employee"], self.emp_a.id)
+
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["employee"], self.emp_a.id)
 
     def test_employee_cannot_create_attendance(self):
         self.auth(self.employee_user)
@@ -242,5 +274,4 @@ class AttendanceAPITests(APITestCase):
         self.auth(self.employee_user)
         detail_url = reverse("attendance-detail", args=[self.b1.id])
         res = self.client.get(detail_url)
-        # Should be 404 due to scoped queryset
         self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
