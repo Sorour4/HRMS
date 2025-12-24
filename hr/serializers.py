@@ -12,13 +12,18 @@ class DepartmentSerializer(serializers.ModelSerializer):
         if manager_employee is None:
             return None
 
-        # Must be a MANAGER role
+        # Block setting manager on CREATE
+        if self.instance is None:
+            raise serializers.ValidationError(
+                "Set department manager after creating the department (use PATCH)."
+            )
+
+        # Must be MANAGER role
         if manager_employee.user.role != User.Role.MANAGER:
             raise serializers.ValidationError("Department manager must have role MANAGER.")
 
-        # If department exists (update), ensure manager belongs to same department
-        department = self.instance
-        if department and manager_employee.department_id != department.id:
+        # Must belong to the same department
+        if manager_employee.department_id != self.instance.id:
             raise serializers.ValidationError("Manager must belong to the same department.")
 
         return manager_employee

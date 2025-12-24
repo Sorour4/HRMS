@@ -4,6 +4,9 @@ from accounts.models import User
 from accounts.permissions import IsAdmin, IsAdminOrManager
 from .models import Department, Employee
 from .serializers import DepartmentSerializer, EmployeeSerializer
+from django.db.models.deletion import ProtectedError
+from rest_framework.exceptions import ValidationError
+
 
 
 class DepartmentViewSet(ModelViewSet):
@@ -11,10 +14,30 @@ class DepartmentViewSet(ModelViewSet):
     serializer_class = DepartmentSerializer
 
     def get_permissions(self):
-        # Admin/Manager can read; only Admin can write (safe start)
+        # Admin-only for write operations
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [IsAdmin()]
-        return [IsAdminOrManager()]
+        # Any authenticated user can read (but queryset is filtered)
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        if user.role == User.Role.ADMIN:
+            return qs
+
+        # Manager/Employee: only their own department
+        if hasattr(user, "employee") and user.employee.department_id:
+            return qs.filter(id=user.employee.department_id)
+
+        return qs.none()
+
+    def perform_destroy(self, instance):
+        try:
+            instance.delete()
+        except ProtectedError:
+            raise ValidationError({"detail": "Cannot delete department because it has employees."})
 
 
 class EmployeeViewSet(ModelViewSet):
