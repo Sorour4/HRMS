@@ -17,6 +17,7 @@ class Department(models.Model):
 
     def __str__(self):
         return self.name
+    
 
 
 class Employee(models.Model):
@@ -50,6 +51,11 @@ class Employee(models.Model):
 
     def __str__(self):
         return f"{self.user.username}"
+    #indexing foreign key for better performance
+    class meta:
+        indexes=[
+            models.Index(fields=["department"])
+        ]
     
 
 class Attendance(models.Model):
@@ -76,6 +82,9 @@ class Attendance(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["employee", "date"], name="uniq_attendance_employee_date")
         ]
+        indexes=[
+            models.Index(fields=["date"])
+        ]
 
     def clean(self):
         if self.date is None:
@@ -83,3 +92,4 @@ class Attendance(models.Model):
 
     def __str__(self):
         return f"{self.employee_id} - {self.date} - {self.status}"
+    
