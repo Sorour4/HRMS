@@ -3,15 +3,15 @@ from rest_framework import viewsets, mixins
 from rest_framework.permissions import IsAuthenticated
 from accounts.models import User
 from accounts.permissions import IsAdmin, IsAdminOrManager
-from .models import Department, Employee, Attendance
-from .serializers import DepartmentSerializer, EmployeeSerializer, AttendanceSerializer
+from .models import Department, Employee, Attendance, Payroll
+from .serializers import DepartmentSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer
 from django.db.models.deletion import ProtectedError
 from rest_framework.exceptions import ValidationError
 
 
 
 class DepartmentViewSet(ModelViewSet):
-    queryset = Department.objects.all().select_related("manager", "manager__user")
+    queryset = Department.objects.all().select_related("manager", "manager__user").order_by("id")
     serializer_class = DepartmentSerializer
 
     def get_permissions(self):
@@ -42,7 +42,7 @@ class DepartmentViewSet(ModelViewSet):
 
 
 class EmployeeViewSet(ModelViewSet):
-    queryset = Employee.objects.all().select_related("user", "department", "manager", "manager__user")
+    queryset = Employee.objects.all().select_related("user", "department", "manager", "manager__user").order_by("id")
     serializer_class = EmployeeSerializer
 
     def get_permissions(self):
@@ -103,6 +103,39 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return qs.filter(employee__department_id=user.employee.department_id)
 
         # EMPLOYEE: only self
+        if hasattr(user, "employee"):
+            return qs.filter(employee_id=user.employee.id)
+
+        return qs.none()
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
+
+
+class PayrollViewSet(viewsets.ModelViewSet):
+    serializer_class = PayrollSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Payroll.objects.select_related("employee", "employee__user", "employee__department")
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+
+        role = getattr(user, "role", None)
+
+        # Admin sees all
+        if user.is_superuser or role == "ADMIN":
+            return qs
+
+        # Manager sees payroll for employees in their department (read-only by serializer)
+        if role == "MANAGER":
+            if not hasattr(user, "employee") or not user.employee.department_id:
+                return qs.none()
+            return qs.filter(employee__department_id=user.employee.department_id)
+
+        # Employee sees only their own
         if hasattr(user, "employee"):
             return qs.filter(employee_id=user.employee.id)
 
