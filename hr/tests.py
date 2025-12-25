@@ -275,3 +275,126 @@ class AttendanceAPITests(PaginationMixin, APITestCase):
         detail_url = reverse("attendance-detail", args=[self.b1.id])
         res = self.client.get(detail_url)
         self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+
+
+from decimal import Decimal
+from rest_framework.test import APITestCase
+from rest_framework import status
+from django.urls import reverse
+
+from accounts.models import User
+from hr.models import Department, Employee, Payroll
+
+
+class PayrollAPITests(PaginationMixin, APITestCase):
+    def setUp(self):
+        self.dept_a = Department.objects.create(name="Dept A", location="Floor 1")
+        self.dept_b = Department.objects.create(name="Dept B", location="Floor 2")
+
+        self.admin = User.objects.create_user(
+            username="admin_pay", password="Pass12345!", role=User.Role.ADMIN, email="admin_pay@test.com"
+        )
+        self.manager_user = User.objects.create_user(
+            username="mgr_pay", password="Pass12345!", role=User.Role.MANAGER, email="mgr_pay@test.com"
+        )
+        self.employee_user = User.objects.create_user(
+            username="emp_pay", password="Pass12345!", role=User.Role.EMPLOYEE, email="emp_pay@test.com"
+        )
+        self.other_employee_user = User.objects.create_user(
+            username="emp2_pay", password="Pass12345!", role=User.Role.EMPLOYEE, email="emp2_pay@test.com"
+        )
+
+        # IMPORTANT: ensure Employee.salary exists in your model (DecimalField)
+        self.manager_emp = Employee.objects.create(user=self.manager_user, department=self.dept_a, salary=Decimal("10000"))
+        self.emp_a = Employee.objects.create(user=self.employee_user, department=self.dept_a, salary=Decimal("8000"))
+        self.emp_b = Employee.objects.create(user=self.other_employee_user, department=self.dept_b, salary=Decimal("9000"))
+
+        self.p1 = Payroll.objects.create(
+            employee=self.emp_a,
+            year=2025,
+            month=12,
+            base_salary=self.emp_a.salary,
+            allowances=Decimal("200"),
+            deductions=Decimal("50"),
+            net_salary=Decimal("8150"),
+            status=Payroll.Status.DRAFT,
+        )
+        self.p2 = Payroll.objects.create(
+            employee=self.emp_b,
+            year=2025,
+            month=12,
+            base_salary=self.emp_b.salary,
+            allowances=Decimal("0"),
+            deductions=Decimal("0"),
+            net_salary=self.emp_b.salary,
+            status=Payroll.Status.DRAFT,
+        )
+
+        self.list_url = reverse("payroll-list")
+
+    def auth(self, user):
+        self.client.force_authenticate(user=user)
+
+    def test_admin_list_sees_all(self):
+        self.auth(self.admin)
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(self.results(res)), 2)
+
+    def test_manager_list_sees_only_department(self):
+        self.auth(self.manager_user)
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["employee"], self.emp_a.id)
+
+    def test_employee_list_sees_self_only(self):
+        self.auth(self.employee_user)
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        items = self.results(res)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["employee"], self.emp_a.id)
+
+    def test_admin_can_create_payroll_base_salary_forced_from_employee_salary(self):
+        self.auth(self.admin)
+        payload = {
+            "employee": self.emp_a.id,
+            "year": 2026,
+            "month": 1,
+            "allowances": "100.00",
+            "deductions": "20.00",
+            "status": "DRAFT",
+        }
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        # base_salary must match Employee.salary, net_salary computed
+        self.assertEqual(Decimal(res.data["base_salary"]), self.emp_a.salary)
+        self.assertEqual(Decimal(res.data["net_salary"]), self.emp_a.salary + Decimal("100.00") - Decimal("20.00"))
+
+    def test_employee_cannot_create_payroll(self):
+        self.auth(self.employee_user)
+        payload = {"employee": self.emp_a.id, "year": 2026, "month": 1}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_manager_cannot_create_payroll(self):
+        self.auth(self.manager_user)
+        payload = {"employee": self.emp_a.id, "year": 2026, "month": 1}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_duplicate_payroll_same_employee_same_period_rejected(self):
+        self.auth(self.admin)
+        payload = {"employee": self.emp_a.id, "year": 2025, "month": 12}
+        res = self.client.post(self.list_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("non_field_errors", res.data)
+
+    def test_employee_cannot_access_other_employee_payroll_detail(self):
+        self.auth(self.employee_user)
+        detail_url = reverse("payroll-detail", args=[self.p2.id])
+        res = self.client.get(detail_url)
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)

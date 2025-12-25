@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from rest_framework.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 class Department(models.Model):
     name = models.CharField(max_length=200, unique=True)
@@ -92,4 +93,40 @@ class Attendance(models.Model):
 
     def __str__(self):
         return f"{self.employee_id} - {self.date} - {self.status}"
+
+
+class Payroll(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        FINAL = "FINAL", "Final"
+        PAID = "PAID", "Paid"
+
+    employee = models.ForeignKey(
+        "hr.Employee",
+        on_delete=models.PROTECT,
+        related_name="payrolls",
+    )
+
+    year = models.PositiveIntegerField(validators=[MinValueValidator(2000), MaxValueValidator(2100)])
+    month = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)])
+
+    base_salary = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    allowances = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    deductions = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    net_salary = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    note = models.CharField(max_length=255, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-year", "-month", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "year", "month"], name="uniq_payroll_employee_period")
+        ]
+
+    def __str__(self):
+        return f"{self.employee_id} {self.year}-{self.month:02d}"
     
