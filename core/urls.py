@@ -20,7 +20,10 @@ from accounts.views import CustomTokenObtainPairView
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from accounts.api import me, list_users
 
-
+# TODO: Each app/module urls should be added inside that app and included here i 
+# the main urls file exactly like hr urls in the last item of urlpatterns list,
+# move each app urls inside the app to make this file clean and only includes the apps
+# urls
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/me/", me, name="me"),

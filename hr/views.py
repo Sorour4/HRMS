@@ -9,7 +9,7 @@ from django.db.models.deletion import ProtectedError
 from rest_framework.exceptions import ValidationError
 
 
-
+# TODO: re-implement the views using the other class based view (GenericAPIView, APIView)
 class DepartmentViewSet(ModelViewSet):
     queryset = Department.objects.all().select_related("manager", "manager__user").order_by("id")
     serializer_class = DepartmentSerializer
@@ -29,6 +29,9 @@ class DepartmentViewSet(ModelViewSet):
             return qs
 
         # Manager/Employee: only their own department
+
+        # TODO: trying to access user.employe.department_id will introduce N+1 query
+        # this needs to be handled.
         if hasattr(user, "employee") and user.employee.department_id:
             return qs.filter(id=user.employee.department_id)
 

@@ -5,7 +5,11 @@ from .permissions import IsAdmin
 from .models import User
 from .serializers import UserListSerializer
 
-
+# TODO: in Django it's always better to follow the framework naming and convenstion 
+# as long as we are going with the framework way of doing things, there is no 
+# meaning of having a file api.py and views.py there is no dofference.
+# move these views to view.py and re-implement then using class based 
+# views (GenericAPIView, APIView)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request):

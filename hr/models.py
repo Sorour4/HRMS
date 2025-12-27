@@ -51,9 +51,15 @@ class Employee(models.Model):
     join_date = models.DateField(null=True, blank=True)
 
     def __str__(self):
+        # this will create N+1 query, handle the query to avoid this.
         return f"{self.user.username}"
     #indexing foreign key for better performance
     class meta:
+        # TODO: django creates indexes by default for several fields type
+        # one of them is the ForeignKey fields, so there is no need for creating
+        # this index manually 
+        # read this article: https://testdriven.io/blog/django-db-indexing/
+
         indexes=[
             models.Index(fields=["department"])
         ]
@@ -61,6 +67,8 @@ class Employee(models.Model):
 
 class Attendance(models.Model):
     class Status(models.TextChoices):
+        # TODO: it's better to move these kind of classes to a different place/file
+        # for better extendability and code cleanliness and easier reusability.
         PRESENT = "PRESENT", "Present"
         ABSENT = "ABSENT", "Absent"
         LATE = "LATE", "Late"

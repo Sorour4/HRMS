@@ -2,6 +2,10 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser, UserManager
 # Create your models here.
 
+
+# TODO: it's a very good ides creating the custom manager, however, it's not used anywhere
+# re-visit this part to determine do you really need to cstomize the manager or not and check 
+# how you can use it, there is no point of customizing anything and not use it.
 class CustomUserManager(UserManager):
     def create_superuser(self, username, email=None, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)

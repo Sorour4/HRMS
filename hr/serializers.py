@@ -76,6 +76,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         - Manager can only create/update for employees in their department.
         - Employee cannot create/update (view-only for self).
         """
+        #TODO: this will raise error if the context does not have "request", use .get() instead to avoid this error
         request = self.context["request"]
         user = request.user
 
