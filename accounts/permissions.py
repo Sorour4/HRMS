@@ -9,16 +9,6 @@ class IsAdmin(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.ADMIN)
 
 
-class IsManager(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.MANAGER)
-
-
-class IsEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.EMPLOYEE)
-
-
 class IsAdminOrManager(BasePermission):
     def has_permission(self, request, view):
         return bool(
