@@ -52,23 +52,16 @@ class Employee(models.Model):
 
     def __str__(self):
         # this will create N+1 query, handle the query to avoid this.
-        return f"{self.user.username}"
-    #indexing foreign key for better performance
-    class meta:
-        # TODO: django creates indexes by default for several fields type
-        # one of them is the ForeignKey fields, so there is no need for creating
-        # this index manually 
-        # read this article: https://testdriven.io/blog/django-db-indexing/
-
-        indexes=[
-            models.Index(fields=["department"])
-        ]
+        return f"employee"
     
 
 class Attendance(models.Model):
     class Status(models.TextChoices):
         # TODO: it's better to move these kind of classes to a different place/file
         # for better extendability and code cleanliness and easier reusability.
+
+        #Can you show example of what can be done with these status?
+
         PRESENT = "PRESENT", "Present"
         ABSENT = "ABSENT", "Absent"
         LATE = "LATE", "Late"
@@ -133,6 +126,9 @@ class Payroll(models.Model):
         ordering = ["-year", "-month", "-created_at"]
         constraints = [
             models.UniqueConstraint(fields=["employee", "year", "month"], name="uniq_payroll_employee_period")
+        ]
+        indexes=[
+            models.Index(fields=["status"])
         ]
 
     def __str__(self):
