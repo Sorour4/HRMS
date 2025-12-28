@@ -1,23 +1,32 @@
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, RetrieveUpdateAPIView
-from rest_framework import viewsets, mixins
+from rest_framework.generics import (
+    ListCreateAPIView,
+    RetrieveUpdateDestroyAPIView,
+    RetrieveUpdateAPIView,
+)
 from rest_framework.permissions import IsAuthenticated
 from accounts.models import User
 from accounts.permissions import IsAdmin, IsAdminOrManager
 from .models import Department, Employee, Attendance, Payroll
-from .serializers import DepartmentSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer
+from .serializers import (
+    DepartmentSerializer,
+    EmployeeSerializer,
+    AttendanceSerializer,
+    PayrollSerializer,
+)
 from django.db.models.deletion import ProtectedError
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import ValidationError
 from .helpers import _get_user_department_id, _get_user_with_employee
-
-# TODO: re-implement the views using the other class based view (GenericAPIView, APIView)
 
 
 class DepartmentListCreateView(ListCreateAPIView):
     serializer_class = DepartmentSerializer
-    permission_classes = [IsAuthenticated]
-
-    # base queryset for serializer usage
     queryset = Department.objects.select_related("manager", "manager__user").order_by("id")
+
+    def get_permissions(self):
+        # Admin-only create, everyone authenticated can read (scoped)
+        if self.request.method == "POST":
+            return [IsAdmin()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         user = self.request.user
@@ -31,18 +40,17 @@ class DepartmentListCreateView(ListCreateAPIView):
             return qs.filter(id=dept_id)
 
         return qs.none()
-
-    def create(self, request, *args, **kwargs):
-        # Admin-only create
-        if not (request.user.is_superuser or request.user.role == User.Role.ADMIN):
-            raise PermissionDenied("You do not have permission to perform this action.")
-        return super().create(request, *args, **kwargs)
 
 
 class DepartmentDetailView(RetrieveUpdateDestroyAPIView):
     serializer_class = DepartmentSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Department.objects.select_related("manager", "manager__user").order_by("id")
+
+    def get_permissions(self):
+        # Admin-only update/delete, everyone authenticated can read (scoped)
+        if self.request.method in ("PUT", "PATCH", "DELETE"):
+            return [IsAdmin()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         user = self.request.user
@@ -57,29 +65,22 @@ class DepartmentDetailView(RetrieveUpdateDestroyAPIView):
 
         return qs.none()
 
-    def update(self, request, *args, **kwargs):
-        # Admin-only update/partial_update
-        if not (request.user.is_superuser or request.user.role == User.Role.ADMIN):
-            raise PermissionDenied("You do not have permission to perform this action.")
-        return super().update(request, *args, **kwargs)
-
-    def destroy(self, request, *args, **kwargs):
-        # Admin-only destroy
-        if not (request.user.is_superuser or request.user.role == User.Role.ADMIN):
-            raise PermissionDenied("You do not have permission to perform this action.")
-
-        instance = self.get_object()
+    def perform_destroy(self, instance):
         try:
             instance.delete()
         except ProtectedError:
             raise ValidationError({"detail": "Cannot delete department because it has employees."})
-        return super().destroy(request, *args, **kwargs)
 
 
 class EmployeeListCreateView(ListCreateAPIView):
     serializer_class = EmployeeSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Employee.objects.select_related("user", "department", "manager", "manager__user").order_by("id")
+
+    def get_permissions(self):
+        # Admin-only create, everyone authenticated can read (scoped)
+        if self.request.method == "POST":
+            return [IsAdmin()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         user = self.request.user
@@ -98,21 +99,21 @@ class EmployeeListCreateView(ListCreateAPIView):
 
         # Employee sees only self
         return qs.filter(user=user)
-
-    def create(self, request, *args, **kwargs):
-        # Only Admin can create
-        if not (request.user.is_superuser or request.user.role == User.Role.ADMIN):
-            raise PermissionDenied("Only admins can create employees.")
-        return super().create(request, *args, **kwargs)
 
 
 class EmployeeDetailView(RetrieveUpdateDestroyAPIView):
     serializer_class = EmployeeSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Employee.objects.select_related("user", "department", "manager", "manager__user").order_by("id")
 
+    def get_permissions(self):
+        # Admin or Manager can update; Admin-only delete; everyone authenticated can read (scoped)
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsAdminOrManager()]
+        if self.request.method == "DELETE":
+            return [IsAdmin()]
+        return [IsAuthenticated()]
+
     def get_queryset(self):
-        # Same scoping rules as list so out-of-scope access becomes 404
         user = self.request.user
         qs = super().get_queryset()
 
@@ -130,28 +131,14 @@ class EmployeeDetailView(RetrieveUpdateDestroyAPIView):
         # Employee sees only self
         return qs.filter(user=user)
 
-    def update(self, request, *args, **kwargs):
-        # Managers can update (but only within scoped queryset), Admin can update
-        if request.user.role not in (User.Role.ADMIN, User.Role.MANAGER) and not request.user.is_superuser:
-            raise PermissionDenied("You do not have permission to update employees.")
-        return super().update(request, *args, **kwargs)
 
-    def destroy(self, request, *args, **kwargs):
-        # Only Admin can delete
-        if not (request.user.is_superuser or request.user.role == User.Role.ADMIN):
-            raise PermissionDenied("Only admins can delete employees.")
-        return super().destroy(request, *args, **kwargs)
-    
 class AttendanceScopedMixin:
-    """
-    Shared queryset scoping logic to keep behavior identical to your ViewSet.
-    """
+    
     queryset = Attendance.objects.select_related("employee", "employee__user", "employee__department")
 
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-
         role = getattr(user, "role", None)
 
         # Admin sees all
@@ -175,31 +162,25 @@ class AttendanceScopedMixin:
         ctx["request"] = self.request
         return ctx
 
-    def _require_admin_or_manager(self, request):
-        role = getattr(request.user, "role", None)
-        if request.user.is_superuser:
-            return
-        if role in (User.Role.ADMIN, User.Role.MANAGER, "ADMIN", "MANAGER"):
-            return
-        raise ValidationError({"detail": "Employees cannot create attendance."})
-
 
 class AttendanceListCreateView(AttendanceScopedMixin, ListCreateAPIView):
     serializer_class = AttendanceSerializer
-    permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
-        self._require_admin_or_manager(request)
-        return super().create(request, *args, **kwargs)
+    def get_permissions(self):
+        # Admin/Manager can create, everyone authenticated can read (scoped)
+        if self.request.method == "POST":
+            return [IsAdminOrManager()]
+        return [IsAuthenticated()]
 
 
 class AttendanceDetailUpdateView(AttendanceScopedMixin, RetrieveUpdateAPIView):
     serializer_class = AttendanceSerializer
-    permission_classes = [IsAuthenticated]
 
-    def update(self, request, *args, **kwargs):
-        self._require_admin_or_manager(request)
-        return super().update(request, *args, **kwargs)
+    def get_permissions(self):
+        # Admin/Manager can update, everyone authenticated can read (scoped)
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsAdminOrManager()]
+        return [IsAuthenticated()]
 
 
 class PayrollScopedMixin:
@@ -208,7 +189,6 @@ class PayrollScopedMixin:
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-
         role = getattr(user, "role", None)
 
         # Admin sees all
@@ -232,30 +212,22 @@ class PayrollScopedMixin:
         ctx["request"] = self.request
         return ctx
 
-    def _require_admin(self, request):
-        role = getattr(request.user, "role", None)
-        if request.user.is_superuser or role in (User.Role.ADMIN, "ADMIN"):
-            return
-        raise ValidationError({"detail": "Not allowed."})
-
 
 class PayrollListCreateView(PayrollScopedMixin, ListCreateAPIView):
     serializer_class = PayrollSerializer
-    permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
-        self._require_admin(request)
-        return super().create(request, *args, **kwargs)
+    def get_permissions(self):
+        # Admin-only create, everyone authenticated can read (scoped)
+        if self.request.method == "POST":
+            return [IsAdmin()]
+        return [IsAuthenticated()]
 
 
 class PayrollDetailView(PayrollScopedMixin, RetrieveUpdateDestroyAPIView):
     serializer_class = PayrollSerializer
-    permission_classes = [IsAuthenticated]
 
-    def update(self, request, *args, **kwargs):
-        self._require_admin(request)
-        return super().update(request, *args, **kwargs)
-
-    def destroy(self, request, *args, **kwargs):
-        self._require_admin(request)
-        return super().destroy(request, *args, **kwargs)
+    def get_permissions(self):
+        # Admin-only update/delete, everyone authenticated can read (scoped)
+        if self.request.method in ("PUT", "PATCH", "DELETE"):
+            return [IsAdmin()]
+        return [IsAuthenticated()]
