@@ -4,7 +4,7 @@ from django.urls import reverse
 from accounts.models import User
 from hr.models import Department, Employee, Attendance
 from datetime import date
-
+from .status import PayrollStatus, AttendanceStatus
 
 class PaginationMixin:
     """
@@ -317,7 +317,7 @@ class PayrollAPITests(PaginationMixin, APITestCase):
             allowances=Decimal("200"),
             deductions=Decimal("50"),
             net_salary=Decimal("8150"),
-            status=Payroll.Status.DRAFT,
+            status=PayrollStatus.DRAFT,
         )
         self.p2 = Payroll.objects.create(
             employee=self.emp_b,
@@ -327,7 +327,7 @@ class PayrollAPITests(PaginationMixin, APITestCase):
             allowances=Decimal("0"),
             deductions=Decimal("0"),
             net_salary=self.emp_b.salary,
-            status=Payroll.Status.DRAFT,
+            status=PayrollStatus.DRAFT,
         )
 
         self.list_url = reverse("payroll-list")

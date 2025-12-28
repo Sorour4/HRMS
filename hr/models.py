@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from rest_framework.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
+from .status import AttendanceStatus, PayrollStatus
 
 class Department(models.Model):
     name = models.CharField(max_length=200, unique=True)
@@ -56,24 +57,14 @@ class Employee(models.Model):
     
 
 class Attendance(models.Model):
-    class Status(models.TextChoices):
-        # TODO: it's better to move these kind of classes to a different place/file
-        # for better extendability and code cleanliness and easier reusability.
-
-        #Can you show example of what can be done with these status?
-
-        PRESENT = "PRESENT", "Present"
-        ABSENT = "ABSENT", "Absent"
-        LATE = "LATE", "Late"
-        LEAVE = "LEAVE", "Leave"
-
+    
     employee = models.ForeignKey(
         "hr.Employee",
         on_delete=models.PROTECT,
         related_name="attendance_records",
     )
     date = models.DateField()
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PRESENT)
+    status = models.CharField(max_length=10, choices=AttendanceStatus.choices, default=AttendanceStatus.PRESENT)
     note = models.CharField(max_length=255, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -97,11 +88,7 @@ class Attendance(models.Model):
 
 
 class Payroll(models.Model):
-    class Status(models.TextChoices):
-        DRAFT = "DRAFT", "Draft"
-        FINAL = "FINAL", "Final"
-        PAID = "PAID", "Paid"
-
+    
     employee = models.ForeignKey(
         "hr.Employee",
         on_delete=models.PROTECT,
@@ -116,7 +103,7 @@ class Payroll(models.Model):
     deductions = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     net_salary = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
 
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    status = models.CharField(max_length=10, choices=PayrollStatus.choices, default=PayrollStatus.DRAFT)
     note = models.CharField(max_length=255, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
