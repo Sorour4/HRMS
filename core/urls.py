@@ -17,8 +17,6 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from accounts.views import CustomTokenObtainPairView
-from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
-from accounts.api import me, list_users
 
 # TODO: Each app/module urls should be added inside that app and included here i 
 # the main urls file exactly like hr urls in the last item of urlpatterns list,
@@ -26,10 +24,6 @@ from accounts.api import me, list_users
 # urls
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/auth/me/", me, name="me"),
-    path("api/auth/login/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    path("api/auth/verify/", TokenVerifyView.as_view(), name="token_verify"),
-    path("api/users/", list_users, name="list_users"),
+    path("api/", include("accounts.urls")),
     path("api/", include("hr.urls")),
 ]

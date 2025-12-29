@@ -2,19 +2,11 @@ from rest_framework.permissions import BasePermission
 from accounts.models import User
 
 # TODO: many of these permissions are not used, if it's not needed just remove it.
+# PS:isn't it better to have them, even if they aren't used at this time ?
+
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.ADMIN)
-
-
-class IsManager(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.MANAGER)
-
-
-class IsEmployee(BasePermission):
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and request.user.role == User.Role.EMPLOYEE)
 
 
 class IsAdminOrManager(BasePermission):
