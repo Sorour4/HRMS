@@ -1,5 +1,6 @@
 from rest_framework.permissions import DjangoModelPermissions
 
+
 class DjangoModelPermissionsWithView(DjangoModelPermissions):
 
     perms_map = DjangoModelPermissions.perms_map.copy()
@@ -7,3 +8,5 @@ class DjangoModelPermissionsWithView(DjangoModelPermissions):
         "GET":    ["%(app_label)s.view_%(model_name)s"],
         "HEAD":   ["%(app_label)s.view_%(model_name)s"],
     })
+
+

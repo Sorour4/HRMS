@@ -1,3 +1,4 @@
+# hr/groups.py (or accounts/groups.py if you prefer)
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
 
@@ -7,17 +8,18 @@ def setup_hr_groups():
 
     def get_perm(model, action):
         ct = ContentType.objects.get(app_label="hr", model=model)
-        return Permission.objects.get(content_type=ct, codename=f"{action}_{model}")
+        perm = Permission.objects.filter(content_type=ct, codename=f"{action}_{model}").first()
+        if not perm:
+            raise RuntimeError(f"Missing permission: hr.{action}_{model} (did you migrate?)")
+        return perm
 
     admin, _ = Group.objects.get_or_create(name="Admin")
     hr_staff, _ = Group.objects.get_or_create(name="HR Staff")
     manager, _ = Group.objects.get_or_create(name="Manager")
     employee, _ = Group.objects.get_or_create(name="Employee")
 
-    # Admin: all perms on HR models
     admin.permissions.set([get_perm(m, a) for m in HR_MODELS for a in ACTIONS])
 
-    # HR Staff: tweak as needed
     hr_staff.permissions.set([
         get_perm("department", "view"),
         get_perm("employee", "add"),
@@ -31,7 +33,6 @@ def setup_hr_groups():
         get_perm("payroll", "view"),
     ])
 
-    # Manager: usually department-scoped in queryset
     manager.permissions.set([
         get_perm("department", "view"),
         get_perm("employee", "view"),
@@ -41,9 +42,15 @@ def setup_hr_groups():
         get_perm("payroll", "view"),
     ])
 
-    # Employee: self-scoped in queryset
     employee.permissions.set([
         get_perm("employee", "view"),
         get_perm("attendance", "view"),
         get_perm("payroll", "view"),
     ])
+
+    return {
+        "Admin": admin.permissions.count(),
+        "HR Staff": hr_staff.permissions.count(),
+        "Manager": manager.permissions.count(),
+        "Employee": employee.permissions.count(),
+    }
