@@ -1,11 +1,14 @@
-from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework import status
+
 from accounts.models import User
+from django.contrib.auth.models import Group, Permission
+from django.contrib.contenttypes.models import ContentType
 
 
 class AuthRBACTests(APITestCase):
     def setUp(self):
+        # Users
         self.admin = User.objects.create_user(
             username="admin1",
             password="Pass12345!",
@@ -25,14 +28,36 @@ class AuthRBACTests(APITestCase):
             email="employee1@test.com",
         )
 
+        # Groups
+        admin_g, _ = Group.objects.get_or_create(name="Admin")
+        manager_g, _ = Group.objects.get_or_create(name="Manager")
+        employee_g, _ = Group.objects.get_or_create(name="Employee")
+
+        # HARD reset group permissions (prevents any automatic setup from leaking perms)
+        admin_g.permissions.clear()
+        manager_g.permissions.clear()
+        employee_g.permissions.clear()
+
+        # Give ONLY admin permission required for GET /users/ under DjangoModelPermissions
+        app_label = User._meta.app_label
+        model_name = User._meta.model_name
+        ct = ContentType.objects.get(app_label=app_label, model=model_name)
+        view_user = Permission.objects.get(content_type=ct, codename=f"view_{model_name}")
+        admin_g.permissions.add(view_user)
+
+        # Assign groups to users
+        self.admin.groups.set([admin_g])
+        self.manager.groups.set([manager_g])
+        self.employee.groups.set([employee_g])
+
+        # URLs
         self.login_url = "/api/auth/login/"
         self.refresh_url = "/api/auth/refresh/"
         self.me_url = "/api/auth/me/"
         self.users_url = "/api/users/"
 
     def login(self, username, password):
-        res = self.client.post(self.login_url, {"username": username, "password": password}, format="json")
-        return res
+        return self.client.post(self.login_url, {"username": username, "password": password}, format="json")
 
     def auth_as(self, username, password):
         res = self.login(username, password)
@@ -73,7 +98,6 @@ class AuthRBACTests(APITestCase):
         self.auth_as("admin1", "Pass12345!")
         res = self.client.get(self.users_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        # should return at least these 3 users
         self.assertGreaterEqual(len(res.data), 3)
 
     def test_manager_cannot_list_users(self):
