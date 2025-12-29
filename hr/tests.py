@@ -4,7 +4,7 @@ from django.urls import reverse
 from accounts.models import User
 from hr.models import Department, Employee, Attendance
 from datetime import date
-
+from .status import PayrollStatus, AttendanceStatus
 
 class PaginationMixin:
     """
@@ -249,7 +249,7 @@ class AttendanceAPITests(PaginationMixin, APITestCase):
         self.auth(self.employee_user)
         payload = {"employee": self.emp_a.id, "date": "2025-12-02", "status": "PRESENT"}
         res = self.client.post(self.list_url, payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_manager_can_create_attendance_for_own_department(self):
         self.auth(self.manager_user)
@@ -317,7 +317,7 @@ class PayrollAPITests(PaginationMixin, APITestCase):
             allowances=Decimal("200"),
             deductions=Decimal("50"),
             net_salary=Decimal("8150"),
-            status=Payroll.Status.DRAFT,
+            status=PayrollStatus.DRAFT,
         )
         self.p2 = Payroll.objects.create(
             employee=self.emp_b,
@@ -327,7 +327,7 @@ class PayrollAPITests(PaginationMixin, APITestCase):
             allowances=Decimal("0"),
             deductions=Decimal("0"),
             net_salary=self.emp_b.salary,
-            status=Payroll.Status.DRAFT,
+            status=PayrollStatus.DRAFT,
         )
 
         self.list_url = reverse("payroll-list")
@@ -378,13 +378,13 @@ class PayrollAPITests(PaginationMixin, APITestCase):
         self.auth(self.employee_user)
         payload = {"employee": self.emp_a.id, "year": 2026, "month": 1}
         res = self.client.post(self.list_url, payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_manager_cannot_create_payroll(self):
         self.auth(self.manager_user)
         payload = {"employee": self.emp_a.id, "year": 2026, "month": 1}
         res = self.client.post(self.list_url, payload, format="json")
-        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_duplicate_payroll_same_employee_same_period_rejected(self):
         self.auth(self.admin)

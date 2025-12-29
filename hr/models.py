@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from rest_framework.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
+from .status import AttendanceStatus, PayrollStatus
 
 class Department(models.Model):
     name = models.CharField(max_length=200, unique=True)
@@ -52,35 +53,18 @@ class Employee(models.Model):
 
     def __str__(self):
         # this will create N+1 query, handle the query to avoid this.
-        return f"{self.user.username}"
-    #indexing foreign key for better performance
-    class meta:
-        # TODO: django creates indexes by default for several fields type
-        # one of them is the ForeignKey fields, so there is no need for creating
-        # this index manually 
-        # read this article: https://testdriven.io/blog/django-db-indexing/
-
-        indexes=[
-            models.Index(fields=["department"])
-        ]
+        return f"employee"
     
 
 class Attendance(models.Model):
-    class Status(models.TextChoices):
-        # TODO: it's better to move these kind of classes to a different place/file
-        # for better extendability and code cleanliness and easier reusability.
-        PRESENT = "PRESENT", "Present"
-        ABSENT = "ABSENT", "Absent"
-        LATE = "LATE", "Late"
-        LEAVE = "LEAVE", "Leave"
-
+    
     employee = models.ForeignKey(
         "hr.Employee",
         on_delete=models.PROTECT,
         related_name="attendance_records",
     )
     date = models.DateField()
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PRESENT)
+    status = models.CharField(max_length=10, choices=AttendanceStatus.choices, default=AttendanceStatus.PRESENT)
     note = models.CharField(max_length=255, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -104,11 +88,7 @@ class Attendance(models.Model):
 
 
 class Payroll(models.Model):
-    class Status(models.TextChoices):
-        DRAFT = "DRAFT", "Draft"
-        FINAL = "FINAL", "Final"
-        PAID = "PAID", "Paid"
-
+    
     employee = models.ForeignKey(
         "hr.Employee",
         on_delete=models.PROTECT,
@@ -123,7 +103,7 @@ class Payroll(models.Model):
     deductions = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     net_salary = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
 
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    status = models.CharField(max_length=10, choices=PayrollStatus.choices, default=PayrollStatus.DRAFT)
     note = models.CharField(max_length=255, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -133,6 +113,9 @@ class Payroll(models.Model):
         ordering = ["-year", "-month", "-created_at"]
         constraints = [
             models.UniqueConstraint(fields=["employee", "year", "month"], name="uniq_payroll_employee_period")
+        ]
+        indexes=[
+            models.Index(fields=["status"])
         ]
 
     def __str__(self):

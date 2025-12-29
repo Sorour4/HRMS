@@ -77,7 +77,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         - Employee cannot create/update (view-only for self).
         """
         #TODO: this will raise error if the context does not have "request", use .get() instead to avoid this error
-        request = self.context["request"]
+        request = self.context.get("request")
         user = request.user
 
         # Only validate scope if employee provided (create) or existing instance (update)
