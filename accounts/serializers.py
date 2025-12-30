@@ -2,6 +2,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
 from .models import User
 from django.contrib.auth.models import Group
+from django.contrib.auth.models import Permission
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -41,3 +42,28 @@ class GroupCreateSerializer(serializers.ModelSerializer):
         if Group.objects.filter(name__iexact=value).exists():
             raise serializers.ValidationError("Group with this name already exists.")
         return value
+    
+
+class PermissionListSerializer(serializers.ModelSerializer):
+    content_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Permission
+        fields = ["id", "codename", "name", "content_type"]
+
+    def get_content_type(self, obj):
+        return f"{obj.content_type.app_label}.{obj.content_type.model}"
+    
+
+class GroupPermissionIdsSerializer(serializers.Serializer):
+    permission_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False
+    )
+
+    def validate_permission_ids(self, ids):
+        existing = set(Permission.objects.filter(id__in=ids).values_list("id", flat=True))
+        missing = [i for i in ids if i not in existing]
+        if missing:
+            raise serializers.ValidationError(f"Invalid permission ids: {missing}")
+        return ids

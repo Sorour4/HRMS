@@ -109,3 +109,139 @@ class AuthRBACTests(APITestCase):
         self.auth_as("employee1", "Pass12345!")
         res = self.client.get(self.users_url)
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class AdminGroupPermissionsAPITests(APITestCase):
+    def results(self, res):
+        return res.data["results"] if isinstance(res.data, dict) and "results" in res.data else res.data
+
+    def setUp(self):
+
+        self.admin = User.objects.create_user(
+            username="admin1", password="Pass12345!", role=User.Role.ADMIN, email="admin1@test.com"
+        )
+        self.manager = User.objects.create_user(
+            username="manager1", password="Pass12345!", role=User.Role.MANAGER, email="manager1@test.com"
+        )
+        self.employee = User.objects.create_user(
+            username="employee1", password="Pass12345!", role=User.Role.EMPLOYEE, email="employee1@test.com"
+        )
+
+
+        self.admin_group, _ = Group.objects.get_or_create(name="Admin")
+        self.manager_group, _ = Group.objects.get_or_create(name="Manager")
+        self.employee_group, _ = Group.objects.get_or_create(name="Employee")
+
+        self.admin_group.permissions.clear()
+        self.manager_group.permissions.clear()
+        self.employee_group.permissions.clear()
+
+        self.admin.groups.set([self.admin_group])
+        self.manager.groups.set([self.manager_group])
+        self.employee.groups.set([self.employee_group])
+
+        self.login_url = "/api/auth/login/"
+        self.permissions_url = "/api/admin/permissions/"
+
+        self.target_group = Group.objects.create(name="HR Auditors")
+
+        self.add_perms_url = f"/api/admin/groups/{self.target_group.id}/add-permissions/"
+        self.remove_perms_url = f"/api/admin/groups/{self.target_group.id}/remove-permissions/"
+
+        ct = ContentType.objects.get(app_label=User._meta.app_label, model=User._meta.model_name)
+        self.view_user_perm = Permission.objects.get(content_type=ct, codename=f"view_{User._meta.model_name}")
+
+    def auth_as(self, username, password):
+        res = self.client.post(self.login_url, {"username": username, "password": password}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        access = res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+    def test_admin_can_list_permissions(self):
+        self.auth_as("admin1", "Pass12345!")
+        res = self.client.get(self.permissions_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        items = self.results(res)
+
+        # Defensive: ensure we're iterating over dict items, not strings
+        ids = {item["id"] for item in items if isinstance(item, dict) and "id" in item}
+        self.assertIn(self.view_user_perm.id, ids)
+
+    def test_manager_cannot_list_permissions(self):
+        self.auth_as("manager1", "Pass12345!")
+        res = self.client.get(self.permissions_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_employee_cannot_list_permissions(self):
+        self.auth_as("employee1", "Pass12345!")
+        res = self.client.get(self.permissions_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_can_add_permissions_to_group(self):
+        self.auth_as("admin1", "Pass12345!")
+
+        payload = {"permission_ids": [self.view_user_perm.id]}
+        res = self.client.post(self.add_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.target_group.refresh_from_db()
+        self.assertTrue(self.target_group.permissions.filter(id=self.view_user_perm.id).exists())
+
+    def test_manager_cannot_add_permissions_to_group(self):
+        self.auth_as("manager1", "Pass12345!")
+
+        payload = {"permission_ids": [self.view_user_perm.id]}
+        res = self.client.post(self.add_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_employee_cannot_add_permissions_to_group(self):
+        self.auth_as("employee1", "Pass12345!")
+
+        payload = {"permission_ids": [self.view_user_perm.id]}
+        res = self.client.post(self.add_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_invalid_permission_id_returns_400(self):
+        self.auth_as("admin1", "Pass12345!")
+
+        payload = {"permission_ids": [99999999]}  # invalid
+        res = self.client.post(self.add_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_admin_can_remove_permissions_from_group(self):
+        # First add a perm to the target group directly
+        self.target_group.permissions.add(self.view_user_perm)
+
+        self.auth_as("admin1", "Pass12345!")
+        payload = {"permission_ids": [self.view_user_perm.id]}
+        res = self.client.post(self.remove_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.target_group.refresh_from_db()
+        self.assertFalse(self.target_group.permissions.filter(id=self.view_user_perm.id).exists())
+
+
+    def test_manager_cannot_remove_permissions_from_group(self):
+        self.target_group.permissions.add(self.view_user_perm)
+
+        self.auth_as("manager1", "Pass12345!")
+        payload = {"permission_ids": [self.view_user_perm.id]}
+        res = self.client.post(self.remove_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+
+    def test_employee_cannot_remove_permissions_from_group(self):
+        self.target_group.permissions.add(self.view_user_perm)
+
+        self.auth_as("employee1", "Pass12345!")
+        payload = {"permission_ids": [self.view_user_perm.id]}
+        res = self.client.post(self.remove_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+
+    def test_remove_permissions_invalid_permission_id_returns_400(self):
+        self.auth_as("admin1", "Pass12345!")
+        payload = {"permission_ids": [99999999]}
+        res = self.client.post(self.remove_perms_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)

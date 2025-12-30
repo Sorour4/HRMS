@@ -1,5 +1,10 @@
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import CustomTokenObtainPairSerializer, UserListSerializer, GroupCreateSerializer
+from .serializers import( 
+    CustomTokenObtainPairSerializer,
+    UserListSerializer,
+    GroupCreateSerializer,
+    PermissionListSerializer,
+    GroupPermissionIdsSerializer)
 from rest_framework.generics import GenericAPIView, ListAPIView, ListCreateAPIView
 from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions
 from rest_framework.response import Response
@@ -9,6 +14,7 @@ from django.contrib.auth.models import Group
 from .permissions import IsAdminGroup
 from .groups import setup_hr_groups
 from rest_framework import status
+from django.contrib.auth.models import Permission
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -48,4 +54,54 @@ class DefaultHRGroupsView(GenericAPIView):
         return Response(
             {"detail": "HR groups seeded.", "counts": counts},
             status=status.HTTP_200_OK
+        )
+    
+
+class PermissionListView(ListAPIView):
+    permission_classes = [IsAdminGroup]
+    serializer_class = PermissionListSerializer
+    queryset = Permission.objects.select_related("content_type").order_by(
+        "content_type__app_label", "content_type__model", "codename"
+    )
+
+
+class GroupAddPermissionsView(GenericAPIView):
+    permission_classes = [IsAdminGroup]
+    serializer_class = GroupPermissionIdsSerializer
+
+    def post(self, request, pk):
+        group = Group.objects.get(pk=pk)
+
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        perms = Permission.objects.filter(id__in=ser.validated_data["permission_ids"])
+        group.permissions.add(*perms)
+
+        return Response(
+            {"detail": "Permissions added.", "group_id": group.id, "permission_ids": ser.validated_data["permission_ids"]},
+            status=status.HTTP_200_OK,
+        )
+    
+
+class GroupRemovePermissionsView(GenericAPIView):
+    permission_classes = [IsAdminGroup]
+    serializer_class = GroupPermissionIdsSerializer
+
+    def post(self, request, pk):
+        group = Group.objects.get(pk=pk)
+
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        perms = Permission.objects.filter(id__in=ser.validated_data["permission_ids"])
+        group.permissions.remove(*perms)
+
+        return Response(
+            {
+                "detail": "Permissions removed.",
+                "group_id": group.id,
+                "permission_ids": ser.validated_data["permission_ids"],
+            },
+            status=status.HTTP_200_OK,
         )
