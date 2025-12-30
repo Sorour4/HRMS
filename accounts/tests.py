@@ -321,3 +321,55 @@ class AdminUserGroupAssignmentTests(APITestCase):
         payload = {"group_ids": [99999999]}
         res = self.client.post(self.add_groups_url, payload, format="json")
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class AdminUserDetailWithAuthTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin1", password="Pass12345!", role=User.Role.ADMIN, email="admin1@test.com"
+        )
+        self.employee = User.objects.create_user(
+            username="employee1", password="Pass12345!", role=User.Role.EMPLOYEE, email="employee1@test.com"
+        )
+
+        self.admin_group, _ = Group.objects.get_or_create(name="Admin")
+        self.hr_staff_group, _ = Group.objects.get_or_create(name="HR Staff")
+
+        self.admin_group.permissions.clear()
+        self.hr_staff_group.permissions.clear()
+
+        self.admin.groups.set([self.admin_group])
+
+        self.employee.groups.set([self.hr_staff_group])
+
+        ct = ContentType.objects.get(app_label=User._meta.app_label, model=User._meta.model_name)
+        view_user = Permission.objects.get(content_type=ct, codename=f"view_{User._meta.model_name}")
+        self.hr_staff_group.permissions.add(view_user)
+
+        self.login_url = "/api/auth/login/"
+        self.detail_url = f"/api/admin/users/{self.employee.id}/detail/"
+
+    def auth_as(self, username, password):
+        res = self.client.post(self.login_url, {"username": username, "password": password}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        access = res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+    def test_admin_can_view_user_detail_with_groups_and_permissions(self):
+        self.auth_as("admin1", "Pass12345!")
+        res = self.client.get(self.detail_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(res.data["username"], "employee1")
+        self.assertIn("groups", res.data)
+        self.assertIn("permissions", res.data)
+
+        self.assertIn("HR Staff", res.data["groups"])
+
+        expected_perm = f"{User._meta.app_label}.view_{User._meta.model_name}"
+        self.assertIn(expected_perm, res.data["permissions"])
+
+    def test_non_admin_cannot_view_user_detail(self):
+        self.auth_as("employee1", "Pass12345!")
+        res = self.client.get(self.detail_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)

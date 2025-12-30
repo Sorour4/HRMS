@@ -9,7 +9,8 @@ from .views import(
     GroupAddPermissionsView,
     GroupRemovePermissionsView,
     UserAddGroupsView,
-    UserRemoveGroupsView,)
+    UserRemoveGroupsView,
+    UserDetailWithAuthView,)
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 
 urlpatterns = [
@@ -25,4 +26,5 @@ urlpatterns = [
     path("admin/groups/<int:pk>/remove-permissions/", GroupRemovePermissionsView.as_view(), name="admin-group-remove-perms"),
     path("admin/users/<int:pk>/add-groups/", UserAddGroupsView.as_view(), name="admin-user-add-groups"),
     path("admin/users/<int:pk>/remove-groups/", UserRemoveGroupsView.as_view(), name="admin-user-remove-groups"),
+    path("admin/users/<int:pk>/detail/", UserDetailWithAuthView.as_view(), name="admin-user-detail"),
 ]

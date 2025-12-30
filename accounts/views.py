@@ -144,3 +144,19 @@ class UserRemoveGroupsView(GenericAPIView):
             {"detail": "Groups removed.", "user_id": user.id, "group_ids": ser.validated_data["group_ids"]},
             status=status.HTTP_200_OK,
         )
+
+
+class UserDetailWithAuthView(GenericAPIView):
+    permission_classes = [IsAdminGroup]
+
+    def get(self, request, pk):
+        u = User.objects.get(pk=pk)
+
+        return Response({
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "role": u.role,
+            "groups": list(u.groups.values_list("name", flat=True)),
+            "permissions": sorted(u.get_all_permissions()),
+        })
