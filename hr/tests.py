@@ -1,10 +1,20 @@
-from rest_framework.test import APITestCase
-from rest_framework import status
-from django.urls import reverse
-from accounts.models import User
-from hr.models import Department, Employee, Attendance
 from datetime import date
+from decimal import Decimal
+
+from django.contrib.auth.models import Group, Permission
+from django.contrib.contenttypes.models import ContentType
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
+
+from accounts.models import User
+from hr.models import Department, Employee, Attendance, Payroll
 from .status import PayrollStatus, AttendanceStatus
+
+
+# ----------------------------
+# Pagination helper (unchanged)
+# ----------------------------
 
 class PaginationMixin:
     """
@@ -15,7 +25,83 @@ class PaginationMixin:
         return res.data["results"] if isinstance(res.data, dict) and "results" in res.data else res.data
 
 
-class EmployeeRBACAPITests(PaginationMixin, APITestCase):
+# ------------------------------------
+# Django groups/permissions test helpers
+# ------------------------------------
+
+def ensure_group(name: str) -> Group:
+    group, _ = Group.objects.get_or_create(name=name)
+    return group
+
+
+def add_model_perms(group: Group, app_label: str, model: str, actions: list[str]):
+    """
+    actions: ["add", "change", "delete", "view"]
+    """
+    ct = ContentType.objects.get(app_label=app_label, model=model)
+    codenames = [f"{a}_{model}" for a in actions]
+    perms = Permission.objects.filter(content_type=ct, codename__in=codenames)
+    group.permissions.add(*perms)
+
+
+def setup_hr_test_groups():
+    """
+    Creates groups and assigns perms that match what your tests expect.
+    Returns: (admin_group, manager_group, employee_group)
+    """
+    admin_g = ensure_group("Admin")
+    manager_g = ensure_group("Manager")
+    employee_g = ensure_group("Employee")
+
+    # ADMIN: full control on all HR models
+    for m in ["department", "employee", "attendance", "payroll"]:
+        add_model_perms(admin_g, "hr", m, ["add", "change", "delete", "view"])
+
+    # MANAGER:
+    # - cannot create departments
+    # - can view + change employees (within scoped queryset)
+    # - can view/add/change attendance (within scoped queryset)
+    # - can view payroll (read-only, within scoped queryset)
+    # - can view department (for GET own dept)
+    add_model_perms(manager_g, "hr", "employee", ["view", "change"])
+    add_model_perms(manager_g, "hr", "attendance", ["view", "add", "change"])
+    add_model_perms(manager_g, "hr", "payroll", ["view"])
+    add_model_perms(manager_g, "hr", "department", ["view"])
+
+    # EMPLOYEE:
+    # view-only, scoping will limit to self/own dept
+    add_model_perms(employee_g, "hr", "employee", ["view"])
+    add_model_perms(employee_g, "hr", "attendance", ["view"])
+    add_model_perms(employee_g, "hr", "payroll", ["view"])
+    add_model_perms(employee_g, "hr", "department", ["view"])
+
+    return admin_g, manager_g, employee_g
+
+
+class HRPermsTestMixin:
+    """
+    Convenience mixin to assign groups in setUp without repeating logic.
+    """
+    @classmethod
+    def setUpTestData(cls):
+        # Ensure groups/perms exist once for the whole TestCase class.
+        cls._admin_g, cls._manager_g, cls._employee_g = setup_hr_test_groups()
+
+    def assign_groups(self, admin=None, manager=None, employees=None):
+        if admin is not None:
+            admin.groups.add(self._admin_g)
+        if manager is not None:
+            manager.groups.add(self._manager_g)
+        if employees:
+            for u in employees:
+                u.groups.add(self._employee_g)
+
+
+# -----------------
+# Employee RBAC Tests
+# -----------------
+
+class EmployeeRBACAPITests(HRPermsTestMixin, PaginationMixin, APITestCase):
     def setUp(self):
         # Users
         self.admin = User.objects.create_user(
@@ -29,6 +115,13 @@ class EmployeeRBACAPITests(PaginationMixin, APITestCase):
         )
         self.other_employee_user = User.objects.create_user(
             username="employee2", password="Pass12345!", role=User.Role.EMPLOYEE, email="employee2@test.com"
+        )
+
+        # Assign groups/perms (NEW)
+        self.assign_groups(
+            admin=self.admin,
+            manager=self.manager_user,
+            employees=[self.employee_user, self.other_employee_user],
         )
 
         # Departments
@@ -93,7 +186,11 @@ class EmployeeRBACAPITests(PaginationMixin, APITestCase):
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
 
 
-class DepartmentAPITests(PaginationMixin, APITestCase):
+# -----------------
+# Department API Tests
+# -----------------
+
+class DepartmentAPITests(HRPermsTestMixin, PaginationMixin, APITestCase):
     def setUp(self):
         self.admin = User.objects.create_user(
             username="admin1", password="Pass12345!", role=User.Role.ADMIN, email="admin1@test.com"
@@ -103,6 +200,13 @@ class DepartmentAPITests(PaginationMixin, APITestCase):
         )
         self.employee_user = User.objects.create_user(
             username="employee1", password="Pass12345!", role=User.Role.EMPLOYEE, email="employee1@test.com"
+        )
+
+        # Assign groups/perms (NEW)
+        self.assign_groups(
+            admin=self.admin,
+            manager=self.manager_user,
+            employees=[self.employee_user],
         )
 
         self.dept_a = Department.objects.create(name="Dept A", location="Floor 1")
@@ -185,7 +289,11 @@ class DepartmentAPITests(PaginationMixin, APITestCase):
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
 
-class AttendanceAPITests(PaginationMixin, APITestCase):
+# -----------------
+# Attendance API Tests
+# -----------------
+
+class AttendanceAPITests(HRPermsTestMixin, PaginationMixin, APITestCase):
     def setUp(self):
         self.dept_a = Department.objects.create(name="Dept A", location="Loc A")
         self.dept_b = Department.objects.create(name="Dept B", location="Loc B")
@@ -201,6 +309,13 @@ class AttendanceAPITests(PaginationMixin, APITestCase):
         )
         self.other_employee_user = User.objects.create_user(
             username="emp2", password="pass1234", role=User.Role.EMPLOYEE, email="emp2_att@test.com"
+        )
+
+        # Assign groups/perms (NEW)
+        self.assign_groups(
+            admin=self.admin,
+            manager=self.manager_user,
+            employees=[self.employee_user, self.other_employee_user],
         )
 
         self.manager_emp = Employee.objects.create(
@@ -277,16 +392,11 @@ class AttendanceAPITests(PaginationMixin, APITestCase):
         self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
 
 
-from decimal import Decimal
-from rest_framework.test import APITestCase
-from rest_framework import status
-from django.urls import reverse
+# -----------------
+# Payroll API Tests
+# -----------------
 
-from accounts.models import User
-from hr.models import Department, Employee, Payroll
-
-
-class PayrollAPITests(PaginationMixin, APITestCase):
+class PayrollAPITests(HRPermsTestMixin, PaginationMixin, APITestCase):
     def setUp(self):
         self.dept_a = Department.objects.create(name="Dept A", location="Floor 1")
         self.dept_b = Department.objects.create(name="Dept B", location="Floor 2")
@@ -304,7 +414,13 @@ class PayrollAPITests(PaginationMixin, APITestCase):
             username="emp2_pay", password="Pass12345!", role=User.Role.EMPLOYEE, email="emp2_pay@test.com"
         )
 
-        # IMPORTANT: ensure Employee.salary exists in your model (DecimalField)
+        # Assign groups/perms (NEW)
+        self.assign_groups(
+            admin=self.admin,
+            manager=self.manager_user,
+            employees=[self.employee_user, self.other_employee_user],
+        )
+
         self.manager_emp = Employee.objects.create(user=self.manager_user, department=self.dept_a, salary=Decimal("10000"))
         self.emp_a = Employee.objects.create(user=self.employee_user, department=self.dept_a, salary=Decimal("8000"))
         self.emp_b = Employee.objects.create(user=self.other_employee_user, department=self.dept_b, salary=Decimal("9000"))
