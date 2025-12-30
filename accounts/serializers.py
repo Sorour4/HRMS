@@ -67,3 +67,17 @@ class GroupPermissionIdsSerializer(serializers.Serializer):
         if missing:
             raise serializers.ValidationError(f"Invalid permission ids: {missing}")
         return ids
+
+
+class UserGroupIdsSerializer(serializers.Serializer):
+    group_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False
+    )
+
+    def validate_group_ids(self, ids):
+        existing = set(Group.objects.filter(id__in=ids).values_list("id", flat=True))
+        missing = [i for i in ids if i not in existing]
+        if missing:
+            raise serializers.ValidationError(f"Invalid group ids: {missing}")
+        return ids

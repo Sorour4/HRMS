@@ -245,3 +245,79 @@ class AdminGroupPermissionsAPITests(APITestCase):
         payload = {"permission_ids": [99999999]}
         res = self.client.post(self.remove_perms_url, payload, format="json")
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class AdminUserGroupAssignmentTests(APITestCase):
+    def setUp(self):
+
+        self.admin = User.objects.create_user(
+            username="admin1", password="Pass12345!", role=User.Role.ADMIN, email="admin1@test.com"
+        )
+        self.manager = User.objects.create_user(
+            username="manager1", password="Pass12345!", role=User.Role.MANAGER, email="manager1@test.com"
+        )
+        self.employee = User.objects.create_user(
+            username="employee1", password="Pass12345!", role=User.Role.EMPLOYEE, email="employee1@test.com"
+        )
+
+
+        self.admin_group, _ = Group.objects.get_or_create(name="Admin")
+        self.manager_group, _ = Group.objects.get_or_create(name="Manager")
+        self.hr_staff_group, _ = Group.objects.get_or_create(name="HR Staff")
+
+
+        self.admin_group.permissions.clear()
+        self.manager_group.permissions.clear()
+        self.hr_staff_group.permissions.clear()
+
+
+        self.admin.groups.set([self.admin_group])
+        self.manager.groups.set([self.manager_group])
+
+        self.login_url = "/api/auth/login/"
+
+
+        self.target_user = self.employee
+
+        self.add_groups_url = f"/api/admin/users/{self.target_user.id}/add-groups/"
+        self.remove_groups_url = f"/api/admin/users/{self.target_user.id}/remove-groups/"
+
+    def auth_as(self, username, password):
+        res = self.client.post(self.login_url, {"username": username, "password": password}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        access = res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+
+    def test_admin_can_add_groups_to_user(self):
+        self.auth_as("admin1", "Pass12345!")
+
+        payload = {"group_ids": [self.hr_staff_group.id]}
+        res = self.client.post(self.add_groups_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.target_user.refresh_from_db()
+        self.assertTrue(self.target_user.groups.filter(id=self.hr_staff_group.id).exists())
+
+    def test_admin_can_remove_groups_from_user(self):
+        # Pre-assign group
+        self.target_user.groups.add(self.hr_staff_group)
+
+        self.auth_as("admin1", "Pass12345!")
+        payload = {"group_ids": [self.hr_staff_group.id]}
+        res = self.client.post(self.remove_groups_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.target_user.refresh_from_db()
+        self.assertFalse(self.target_user.groups.filter(id=self.hr_staff_group.id).exists())
+
+    def test_manager_cannot_add_groups_to_user(self):
+        self.auth_as("manager1", "Pass12345!")
+        payload = {"group_ids": [self.hr_staff_group.id]}
+        res = self.client.post(self.add_groups_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_invalid_group_id_returns_400(self):
+        self.auth_as("admin1", "Pass12345!")
+        payload = {"group_ids": [99999999]}
+        res = self.client.post(self.add_groups_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)

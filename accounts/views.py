@@ -4,7 +4,8 @@ from .serializers import(
     UserListSerializer,
     GroupCreateSerializer,
     PermissionListSerializer,
-    GroupPermissionIdsSerializer)
+    GroupPermissionIdsSerializer,
+    UserGroupIdsSerializer,)
 from rest_framework.generics import GenericAPIView, ListAPIView, ListCreateAPIView
 from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions
 from rest_framework.response import Response
@@ -103,5 +104,43 @@ class GroupRemovePermissionsView(GenericAPIView):
                 "group_id": group.id,
                 "permission_ids": ser.validated_data["permission_ids"],
             },
+            status=status.HTTP_200_OK,
+        )
+    
+
+class UserAddGroupsView(GenericAPIView):
+    permission_classes = [IsAdminGroup]
+    serializer_class = UserGroupIdsSerializer
+
+    def post(self, request, pk):
+        user = User.objects.get(pk=pk)
+
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        groups = Group.objects.filter(id__in=ser.validated_data["group_ids"])
+        user.groups.add(*groups)
+
+        return Response(
+            {"detail": "Groups added.", "user_id": user.id, "group_ids": ser.validated_data["group_ids"]},
+            status=status.HTTP_200_OK,
+        )
+
+
+class UserRemoveGroupsView(GenericAPIView):
+    permission_classes = [IsAdminGroup]
+    serializer_class = UserGroupIdsSerializer
+
+    def post(self, request, pk):
+        user = User.objects.get(pk=pk)
+
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        groups = Group.objects.filter(id__in=ser.validated_data["group_ids"])
+        user.groups.remove(*groups)
+
+        return Response(
+            {"detail": "Groups removed.", "user_id": user.id, "group_ids": ser.validated_data["group_ids"]},
             status=status.HTTP_200_OK,
         )
