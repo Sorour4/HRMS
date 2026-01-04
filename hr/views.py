@@ -3,9 +3,10 @@ from rest_framework.generics import (
     RetrieveUpdateDestroyAPIView,
     RetrieveUpdateAPIView,
 )
-from rest_framework.permissions import IsAuthenticated
-from accounts.models import User
-from accounts.permissions import IsAdmin, IsAdminOrManager
+from rest_framework.permissions import IsAuthenticated, DjangoModelPermissions
+from django.db.models.deletion import ProtectedError
+from rest_framework.exceptions import ValidationError
+
 from .models import Department, Employee, Attendance, Payroll
 from .serializers import (
     DepartmentSerializer,
@@ -13,26 +14,23 @@ from .serializers import (
     AttendanceSerializer,
     PayrollSerializer,
 )
-from django.db.models.deletion import ProtectedError
-from rest_framework.exceptions import ValidationError
-from .helpers import _get_user_department_id, _get_user_with_employee
+from .helpers import _get_user_department_id, _get_user_with_employee, has_global_scope, is_manager
 
+
+# ---------
+# Department
+# ---------
 
 class DepartmentListCreateView(ListCreateAPIView):
     serializer_class = DepartmentSerializer
     queryset = Department.objects.select_related("manager", "manager__user").order_by("id")
-
-    def get_permissions(self):
-        # Admin-only create, everyone authenticated can read (scoped)
-        if self.request.method == "POST":
-            return [IsAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
-        if user.role == User.Role.ADMIN:
+        if has_global_scope(user):
             return qs
 
         dept_id = _get_user_department_id(self.request)
@@ -45,18 +43,13 @@ class DepartmentListCreateView(ListCreateAPIView):
 class DepartmentDetailView(RetrieveUpdateDestroyAPIView):
     serializer_class = DepartmentSerializer
     queryset = Department.objects.select_related("manager", "manager__user").order_by("id")
-
-    def get_permissions(self):
-        # Admin-only update/delete, everyone authenticated can read (scoped)
-        if self.request.method in ("PUT", "PATCH", "DELETE"):
-            return [IsAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
-        if user.role == User.Role.ADMIN:
+        if has_global_scope(user):
             return qs
 
         dept_id = _get_user_department_id(self.request)
@@ -72,86 +65,71 @@ class DepartmentDetailView(RetrieveUpdateDestroyAPIView):
             raise ValidationError({"detail": "Cannot delete department because it has employees."})
 
 
+# ------
+# Employee
+# ------
+
 class EmployeeListCreateView(ListCreateAPIView):
     serializer_class = EmployeeSerializer
     queryset = Employee.objects.select_related("user", "department", "manager", "manager__user").order_by("id")
-
-    def get_permissions(self):
-        # Admin-only create, everyone authenticated can read (scoped)
-        if self.request.method == "POST":
-            return [IsAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
-        # Admin sees all
-        if user.role == User.Role.ADMIN:
+        if has_global_scope(user):
             return qs
 
-        # Manager sees only department employees
-        if user.role == User.Role.MANAGER:
+        if is_manager(user):
             u = _get_user_with_employee(self.request)
             if not hasattr(u, "employee") or not u.employee or u.employee.department_id is None:
                 return qs.none()
-            return qs.filter(department_id=u.employee.department_id)
+            return qs.filter(department_id=u.employee.department_id) #not N+1 because of select_related
 
-        # Employee sees only self
         return qs.filter(user=user)
 
 
 class EmployeeDetailView(RetrieveUpdateDestroyAPIView):
     serializer_class = EmployeeSerializer
     queryset = Employee.objects.select_related("user", "department", "manager", "manager__user").order_by("id")
-
-    def get_permissions(self):
-        # Admin or Manager can update; Admin-only delete; everyone authenticated can read (scoped)
-        if self.request.method in ("PUT", "PATCH"):
-            return [IsAdminOrManager()]
-        if self.request.method == "DELETE":
-            return [IsAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
 
-        # Admin sees all
-        if user.role == User.Role.ADMIN:
+        if has_global_scope(user):
             return qs
 
-        # Manager sees only department employees
-        if user.role == User.Role.MANAGER:
+        if is_manager(user):
             u = _get_user_with_employee(self.request)
             if not hasattr(u, "employee") or not u.employee or u.employee.department_id is None:
                 return qs.none()
             return qs.filter(department_id=u.employee.department_id)
 
-        # Employee sees only self
         return qs.filter(user=user)
 
 
+# ----------
+# Attendance
+# ----------
+
 class AttendanceScopedMixin:
-    
     queryset = Attendance.objects.select_related("employee", "employee__user", "employee__department")
 
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        role = getattr(user, "role", None)
 
-        # Admin sees all
-        if user.is_superuser or role == User.Role.ADMIN or role == "ADMIN":
+        if has_global_scope(user):
             return qs
 
-        # Manager sees department only
-        if role == User.Role.MANAGER or role == "MANAGER":
-            if not hasattr(user, "employee") or not user.employee.department_id:
+        if is_manager(user):
+            if not hasattr(user, "employee") or not user.employee or not user.employee.department_id:
                 return qs.none()
-            return qs.filter(employee__department_id=user.employee.department_id)
+            return qs.filter(employee__department_id=user.employee.department_id) 
 
-        # Employee sees self only
         if hasattr(user, "employee") and user.employee:
             return qs.filter(employee_id=user.employee.id)
 
@@ -165,23 +143,17 @@ class AttendanceScopedMixin:
 
 class AttendanceListCreateView(AttendanceScopedMixin, ListCreateAPIView):
     serializer_class = AttendanceSerializer
-
-    def get_permissions(self):
-        # Admin/Manager can create, everyone authenticated can read (scoped)
-        if self.request.method == "POST":
-            return [IsAdminOrManager()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
 
 class AttendanceDetailUpdateView(AttendanceScopedMixin, RetrieveUpdateAPIView):
     serializer_class = AttendanceSerializer
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
-    def get_permissions(self):
-        # Admin/Manager can update, everyone authenticated can read (scoped)
-        if self.request.method in ("PUT", "PATCH"):
-            return [IsAdminOrManager()]
-        return [IsAuthenticated()]
 
+# -------
+# Payroll
+# -------
 
 class PayrollScopedMixin:
     queryset = Payroll.objects.select_related("employee", "employee__user", "employee__department")
@@ -189,19 +161,15 @@ class PayrollScopedMixin:
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        role = getattr(user, "role", None)
 
-        # Admin sees all
-        if user.is_superuser or role in (User.Role.ADMIN, "ADMIN"):
+        if has_global_scope(user):
             return qs
 
-        # Manager sees only their department (read-only)
-        if role in (User.Role.MANAGER, "MANAGER"):
-            if not hasattr(user, "employee") or not user.employee.department_id:
+        if is_manager(user):
+            if not hasattr(user, "employee") or not user.employee or not user.employee.department_id:
                 return qs.none()
             return qs.filter(employee__department_id=user.employee.department_id)
 
-        # Employee sees only their own
         if hasattr(user, "employee") and user.employee:
             return qs.filter(employee_id=user.employee.id)
 
@@ -215,19 +183,9 @@ class PayrollScopedMixin:
 
 class PayrollListCreateView(PayrollScopedMixin, ListCreateAPIView):
     serializer_class = PayrollSerializer
-
-    def get_permissions(self):
-        # Admin-only create, everyone authenticated can read (scoped)
-        if self.request.method == "POST":
-            return [IsAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
 
 
 class PayrollDetailView(PayrollScopedMixin, RetrieveUpdateDestroyAPIView):
     serializer_class = PayrollSerializer
-
-    def get_permissions(self):
-        # Admin-only update/delete, everyone authenticated can read (scoped)
-        if self.request.method in ("PUT", "PATCH", "DELETE"):
-            return [IsAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, DjangoModelPermissions]
